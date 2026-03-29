@@ -13,14 +13,14 @@ const RPC_URL = "https://rpc-testnet.monad.xyz"; // Robinhood TestnetのRPC
 // 署名用ウォレットの準備
 const wallet = new ethers.Wallet(PRIVATE_KEY);
 
-// レート計算ロジック（token-rates.jsのロジックをサーバー側に移植）
+// レート計算ロジック
 const TOKEN_RATES = {
     "0x196eCa072F41571233E4F6D215F89A3446DD569b": 0.0001, // MRT
     "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": 0.5,    // AMZN
     "0x71178BAc73cBeb415514eB542a8995b82669778d": 1.0,    // AMD
-    "0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93": 5.0,    // NFLX (これを追加！)
-    "0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0": 10.0,   // PLTR (必要なら追加)
-    "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E": 20.0,   // TSLA (必要なら追加)
+    "0x3B8262a63d25F0477c4DDe23f83CfE22Cb768C93": 5.0,    // NFLX
+    "0x1fFB130bCe111C47c947E99f1C946f00A9E298d0": 10.0,   // PLTR
+    "0xCc9f0d691353fE40098F1559c3a30368943Bd4E4": 20.0    // TSLA
 };
 
 app.post('/get-signature', async (req, res) => {
