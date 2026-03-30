@@ -6,52 +6,50 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 環境設定（Renderのダッシュボードで設定します） ---
+// Renderの環境変数から取得
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const RPC_URL = "https://rpc-testnet.monad.xyz"; // Robinhood TestnetのRPC
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+const RPC_URL = "https://rpc-testnet.monad.xyz";
 
-// 署名用ウォレットの準備
-const wallet = new ethers.Wallet(PRIVATE_KEY);
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// レート計算ロジック
-const TOKEN_RATES = {
-    "0x196eCa072F41571233E4F6D215F89A3446DD569b": 0.0001, // MRT
-    "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02": 0.5,    // AMZN
-    "0x71178BAc73cBeb415514eB542a8995b82669778d": 1.0,    // AMD
-    "0x3B8262a63d25F0477c4DDe23f83CfE22Cb768C93": 5.0,    // NFLX
-    "0x1fFB130bCe111C47c947E99f1C946f00A9E298d0": 10.0,   // PLTR
-    "0xCc9f0d691353fE40098F1559c3a30368943Bd4E4": 20.0    // TSLA
-};
+// 新コントラクト参照用の最小限のABI
+const ABI = [
+    "function tokenRates(address) view returns (uint256)",
+    "function isSupported(address) view returns (bool)"
+];
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
-        // 1. レートに基づいて受け取り量を計算
-        const rateFrom = TOKEN_RATES[fromToken];
-        const rateTo = TOKEN_RATES[toToken];
+        // --- 修正の核心：コントラクトから最新レートを直接取得 ---
+        const [rateFrom, rateTo, isFromOk, isToOk] = await Promise.all([
+            contract.tokenRates(fromToken),
+            contract.tokenRates(toToken),
+            contract.isSupported(fromToken),
+            contract.isSupported(toToken)
+        ]);
 
-        if (!rateFrom || !rateTo) {
-            return res.status(400).json({ error: "Unsupported token pair" });
+        if (!isFromOk || !isToOk || rateFrom === 0n || rateTo === 0n) {
+            return res.status(400).json({ error: "Unsupported token or rate not set" });
         }
 
-        // 交換量の計算 (例: (支払額 * 支払レート) / 受取レート)
-        const fromAmountNum = parseFloat(ethers.formatUnits(fromAmount, 18));
-        const toAmountNum = (fromAmountNum * rateFrom) / rateTo;
-        const toAmountBaseUnit = ethers.parseUnits(toAmountNum.toFixed(18), 18);
+        // 計算ロジック（BigIntで精密に計算）
+        const fromAmountBI = BigInt(fromAmount);
+        const toAmountBI = (fromAmountBI * rateFrom) / rateTo;
 
-        // 2. コントラクトの abi.encodePacked と同じ形式でハッシュ作成
+        // ハッシュ作成と署名
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [userAddress, fromToken, toToken, fromAmount, toAmountBaseUnit, nonce]
+            [userAddress, fromToken, toToken, fromAmount, toAmountBI, nonce]
         );
-
-        // 3. 署名の作成
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
-        // 4. クライアントに返却
         res.json({
-            toAmount: toAmountBaseUnit.toString(),
+            toAmount: toAmountBI.toString(),
             signature: signature
         });
 
@@ -62,6 +60,4 @@ app.post('/get-signature', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Signer server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Self-Sovereign Signer running on port ${PORT}`));
