@@ -26,15 +26,16 @@ const provider = new ethers.JsonRpcProvider(RPC_URL, network, {
 
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// 3. ABI定義
+// 3. ABI定義（必要なものだけに絞ります）
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
     "function isSupported(address) view returns (bool)"
 ];
 
-// 4. コントラクト作成
-const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+// 4. コントラクト作成（ここではまだ通信しません）
+// 第3引数を wallet にすることで、署名権限を持たせつつ定義だけ完了させます
+const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 app.post('/get-signature', async (req, res) => {
     try {
