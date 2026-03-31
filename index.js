@@ -1,4 +1,3 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 require('dotenv').config();
 const express = require('express');
 const { ethers } = require('ethers');
@@ -11,37 +10,41 @@ app.use(express.json());
 // --- ネットワーク・コントラクト設定 ---
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// 1. ネットワーク情報を完全に固定（自動検知を100%遮断）
-const network = ethers.Network.from({
+// PRIVATE_KEYに 0x が付いていない場合を考慮して補完
+let privateKey = process.env.PRIVATE_KEY;
+if (privateKey && !privateKey.startsWith('0x')) {
+    privateKey = '0x' + privateKey;
+}
+
+// 1. ネットワーク情報を明示的に定義
+const network = {
     chainId: 8008135,
     name: 'robinhood-testnet'
-});
+};
 
-// 2. プロバイダー作成（staticNetwork: true で余計な通信を禁止）
+// 2. プロバイダー作成 (TLSエラーを避けるため、極力標準設定を使用)
 const provider = new ethers.JsonRpcProvider(RPC_URL, network, {
     staticNetwork: true
 });
 
-const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+// 3. ウォレット作成
+const wallet = new ethers.Wallet(privateKey, provider);
 
-// 3. ABI定義（必要なものだけに絞ります）
+// 4. ABI定義
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
     "function isSupported(address) view returns (bool)"
 ];
 
-// 4. コントラクト作成（ここではまだ通信しません）
-// 第3引数を wallet にすることで、署名権限を持たせつつ定義だけ完了させます
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        // ここで初めて通信が発生するように制御されます
+        // 通信テスト時、ここでの await Promise.all が失敗している可能性が高いです
         const [fromRate, toRate, maxLimitUSD, isFromOk, isToOk] = await Promise.all([
             contract.tokenRates(fromToken),
             contract.tokenRates(toToken),
@@ -82,8 +85,11 @@ app.post('/get-signature', async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Signature Error:", error);
-        res.status(500).json({ error: "Internal server error during signing." });
+        console.error("Signature Error Details:", error);
+        res.status(500).json({
+            error: "Internal server error during signing.",
+            details: error.message
+        });
     }
 });
 
