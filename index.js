@@ -1,8 +1,8 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+require('dotenv').config();
 const express = require('express');
 const { ethers } = require('ethers');
 const cors = require('cors');
-require('dotenv').config();
 
 const app = express();
 app.use(cors());
