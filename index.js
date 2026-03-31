@@ -10,11 +10,12 @@ app.use(express.json());
 
 // --- ネットワーク・コントラクト設定 ---
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
-const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
+
+// 【重要】コードに直接URLを書かず、Renderの設定（Environment）から読み込む
+const RPC_URL = process.env.RPC_URL_ROBINHOOD;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// --- 【重要修正】接続エラー回避のための設定 ---
-// 第2引数を undefined、第3引数に staticNetwork: true を指定します
+// StaticNetworkをtrueにして、余計な通信をカットする
 const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, {
     staticNetwork: true
 });
