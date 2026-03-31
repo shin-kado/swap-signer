@@ -1,4 +1,4 @@
-// 1. TLS/SSLの証明書検証を無効化（Robinhoodテストネット接続には必須）
+// 1. TLS/SSLエラーを力技で回避する設定
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 require('dotenv').config();
@@ -14,9 +14,13 @@ app.use(express.json());
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
 
-// 2. プロバイダー設定：staticNetworkで接続時のオーバーヘッドを削減
-const provider = new ethers.JsonRpcProvider(RPC_URL, 8008135, {
-    staticNetwork: true
+// 2. プロバイダーの通信設定を極限までシンプルにする（EPROTO対策）
+// FetchRequestを使用して、接続のタイムアウトとリトライを制御します
+const fetchReq = new ethers.FetchRequest(RPC_URL);
+fetchReq.timeout = 15000; // 15秒でタイムアウト設定
+
+const provider = new ethers.JsonRpcProvider(fetchReq, 8008135, {
+    staticNetwork: true // ネットワークの自動検知を完全にオフにする
 });
 
 // PRIVATE_KEYの取得と補完
@@ -25,7 +29,6 @@ if (privateKey && !privateKey.startsWith('0x')) {
     privateKey = '0x' + privateKey;
 }
 
-// ウォレットの初期化
 const wallet = new ethers.Wallet(privateKey, provider);
 
 const ABI = [
@@ -34,22 +37,21 @@ const ABI = [
     "function isSupported(address) view returns (bool)"
 ];
 
-// コントラクトインスタンスの作成
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        console.log(`[DEBUG] Request received for: ${userAddress}`);
+        console.log(`[DEBUG] Attempting to fetch data for ${userAddress}`);
 
-        // 通信の安定性を高めるため、個別に await 実行
-        // ここでエラーが出る場合は RPC URL または ネットワーク負荷が原因です
-        const fromRate = await contract.tokenRates(fromToken);
-        const toRate = await contract.tokenRates(toToken);
-        const maxLimitUSD = await contract.maxSwapAmountUSD();
-        const isFromOk = await contract.isSupported(fromToken);
-        const isToOk = await contract.isSupported(toToken);
+        // 通信エラーを特定しやすくするため、Promise.all ではなく順番に実行
+        // 各工程でエラーが出ても詳細をキャッチできるようにします
+        const fromRate = await contract.tokenRates(fromToken).catch(e => { throw new Error("FromRate fetch failed: " + e.message) });
+        const toRate = await contract.tokenRates(toToken).catch(e => { throw new Error("ToRate fetch failed: " + e.message) });
+        const maxLimitUSD = await contract.maxSwapAmountUSD().catch(e => { throw new Error("MaxLimit fetch failed: " + e.message) });
+        const isFromOk = await contract.isSupported(fromToken).catch(e => { throw new Error("isFromOk fetch failed: " + e.message) });
+        const isToOk = await contract.isSupported(toToken).catch(e => { throw new Error("isToOk fetch failed: " + e.message) });
 
         if (!isFromOk || !isToOk) {
             return res.status(400).json({ error: "One of the tokens is not supported." });
@@ -58,7 +60,7 @@ app.post('/get-signature', async (req, res) => {
         const fromAmountBN = BigInt(fromAmount);
         const fromAmountUSD = (fromAmountBN * fromRate) / BigInt(10 ** 18);
 
-        // 上限チェック機能（保持）
+        // 上限チェックロジック（保持）
         if (fromAmountUSD > maxLimitUSD) {
             return res.status(400).json({
                 error: "Exceeds max swap amount limit (USD)",
@@ -67,10 +69,7 @@ app.post('/get-signature', async (req, res) => {
             });
         }
 
-        if (toRate === BigInt(0)) {
-            return res.status(400).json({ error: "Target token rate is zero." });
-        }
-
+        if (toRate === BigInt(0)) return res.status(400).json({ error: "Target token rate is zero." });
         const toAmountBN = (fromAmountBN * fromRate) / toRate;
         const toAmount = toAmountBN.toString();
 
@@ -79,10 +78,7 @@ app.post('/get-signature', async (req, res) => {
             ["address", "address", "address", "uint256", "uint256", "uint256"],
             [userAddress, fromToken, toToken, fromAmount, toAmount, nonce]
         );
-
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
-
-        console.log(`[DEBUG] Signature generated successfully`);
 
         res.json({
             toAmount,
@@ -91,12 +87,11 @@ app.post('/get-signature', async (req, res) => {
         });
 
     } catch (error) {
-        // Renderのログで詳細を確認できるように詳細を出力
         console.error("Signature Error Details:", error);
         res.status(500).json({
             error: "Internal server error during signing.",
             details: error.message,
-            code: error.code // EPROTO 等のエラーコードを表示
+            code: error.code || "UNKNOWN_ERROR"
         });
     }
 });
@@ -104,5 +99,4 @@ app.post('/get-signature', async (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`V3 Signer Server active on port ${PORT}`);
-    console.log(`Configured for Robinhood Testnet (ChainID: 8008135)`);
 });
