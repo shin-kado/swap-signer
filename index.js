@@ -1,3 +1,4 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const express = require('express');
 const { ethers } = require('ethers');
 const cors = require('cors');
@@ -47,7 +48,7 @@ app.post('/get-signature', async (req, res) => {
         const fromAmountUSD = (fromAmountBN * fromRate) / BigInt(10 ** 18);
 
         if (fromAmountUSD > maxLimitUSD) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: "Exceeds max swap amount limit (USD)",
                 requestedUSD: ethers.formatUnits(fromAmountUSD, 18),
                 limitUSD: ethers.formatUnits(maxLimitUSD, 18)
@@ -69,8 +70,8 @@ app.post('/get-signature', async (req, res) => {
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
         // フロントエンドに「計算された受取量」と「署名」を返す
-        res.json({ 
-            toAmount, 
+        res.json({
+            toAmount,
             signature,
             rateUsed: ethers.formatUnits(fromRate, 18) // 確認用
         });
