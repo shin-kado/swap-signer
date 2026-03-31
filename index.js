@@ -13,29 +13,34 @@ const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// 【重要修正】ネットワーク情報を手動で教えることで、エラーが出る「自動検知」を封じ込めます
-const networkInfo = {
-    chainId: 8008135, // Robinhood TestnetのID
+// 1. ネットワーク情報を完全に固定（自動検知を100%遮断）
+const network = ethers.Network.from({
+    chainId: 8008135,
     name: 'robinhood-testnet'
-};
+});
 
-const provider = new ethers.JsonRpcProvider(RPC_URL, networkInfo, {
+// 2. プロバイダー作成（staticNetwork: true で余計な通信を禁止）
+const provider = new ethers.JsonRpcProvider(RPC_URL, network, {
     staticNetwork: true
 });
 
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
+// 3. ABI定義
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
     "function isSupported(address) view returns (bool)"
 ];
+
+// 4. コントラクト作成
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
+        // ここで初めて通信が発生するように制御されます
         const [fromRate, toRate, maxLimitUSD, isFromOk, isToOk] = await Promise.all([
             contract.tokenRates(fromToken),
             contract.tokenRates(toToken),
@@ -81,5 +86,5 @@ app.post('/get-signature', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 10000; // Renderのデフォルト10000に合わせておきます
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`V3 Signer Server active on port ${PORT}`));
