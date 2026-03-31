@@ -11,27 +11,20 @@ app.use(express.json());
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
 
-// PRIVATE_KEYに 0x が付いていない場合を考慮して補完
+// PRIVATE_KEYの 0x 補完
 let privateKey = process.env.PRIVATE_KEY;
 if (privateKey && !privateKey.startsWith('0x')) {
     privateKey = '0x' + privateKey;
 }
 
-// 1. ネットワーク情報を明示的に定義
-const network = {
-    chainId: 8008135,
-    name: 'robinhood-testnet'
-};
-
-// 2. プロバイダー作成 (TLSエラーを避けるため、極力標準設定を使用)
-const provider = new ethers.JsonRpcProvider(RPC_URL, network, {
+// 【修正ポイント】networkオブジェクトを明示的に作成せず、
+// JsonRpcProvider に最小限の情報だけを渡します。
+const provider = new ethers.JsonRpcProvider(RPC_URL, 8008135, {
     staticNetwork: true
 });
 
-// 3. ウォレット作成
 const wallet = new ethers.Wallet(privateKey, provider);
 
-// 4. ABI定義
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
@@ -44,14 +37,12 @@ app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        // 通信テスト時、ここでの await Promise.all が失敗している可能性が高いです
-        const [fromRate, toRate, maxLimitUSD, isFromOk, isToOk] = await Promise.all([
-            contract.tokenRates(fromToken),
-            contract.tokenRates(toToken),
-            contract.maxSwapAmountUSD(),
-            contract.isSupported(fromToken),
-            contract.isSupported(toToken)
-        ]);
+        // 通信の安定性を高めるため、個別に await します
+        const fromRate = await contract.tokenRates(fromToken);
+        const toRate = await contract.tokenRates(toToken);
+        const maxLimitUSD = await contract.maxSwapAmountUSD();
+        const isFromOk = await contract.isSupported(fromToken);
+        const isToOk = await contract.isSupported(toToken);
 
         if (!isFromOk || !isToOk) {
             return res.status(400).json({ error: "One of the tokens is not supported." });
@@ -78,11 +69,7 @@ app.post('/get-signature', async (req, res) => {
         );
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
-        res.json({
-            toAmount,
-            signature,
-            rateUsed: ethers.formatUnits(fromRate, 18)
-        });
+        res.json({ toAmount, signature, rateUsed: ethers.formatUnits(fromRate, 18) });
 
     } catch (error) {
         console.error("Signature Error Details:", error);
