@@ -10,13 +10,16 @@ app.use(express.json());
 
 // --- ネットワーク・コントラクト設定 ---
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
-
-// 【重要】コードに直接URLを書かず、Renderの設定（Environment）から読み込む
 const RPC_URL = process.env.RPC_URL_ROBINHOOD;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// StaticNetworkをtrueにして、余計な通信をカットする
-const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, {
+// ネットワーク情報を手動で定義して、自動検知を完全に封じ込めます
+const networkInfo = {
+    chainId: 8008135, // Robinhood TestnetのID
+    name: 'robinhood-testnet'
+};
+
+const provider = new ethers.JsonRpcProvider(RPC_URL, networkInfo, {
     staticNetwork: true
 });
 
