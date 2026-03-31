@@ -10,10 +10,10 @@ app.use(express.json());
 
 // --- ネットワーク・コントラクト設定 ---
 const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
-const RPC_URL = process.env.RPC_URL_ROBINHOOD;
+const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// ネットワーク情報を手動で定義して、自動検知を完全に封じ込めます
+// 【重要修正】ネットワーク情報を手動で教えることで、エラーが出る「自動検知」を封じ込めます
 const networkInfo = {
     chainId: 8008135, // Robinhood TestnetのID
     name: 'robinhood-testnet'
