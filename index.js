@@ -11,18 +11,19 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL_ROBINHOOD || "https://rpc.testnet.chain.robinhood.com";
 
-// 検証で成功したシンプルなProvider設定
+// Provider設定
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 let pk = PRIVATE_KEY;
 if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
-// 検証で成功したABI形式をベースに構成
+// ABI設定 (getStockを追加)
 const ABI = [
     "function isSupported(address) view returns (bool)",
     "function tokenRates(address) view returns (uint256)",
-    "function maxSwapAmountUSD() view returns (uint256)"
+    "function maxSwapAmountUSD() view returns (uint256)",
+    "function getStock(address) view returns (uint256)" // 在庫確認用に追加 
 ];
 
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
@@ -49,7 +50,7 @@ app.post('/get-signature', async (req, res) => {
 
         console.log(`--- Request Start ---`);
 
-        // 1. 必須データの取得 (isSupported, tokenRates)
+        // 1. 必須データの取得
         const [isFromOk, isToOk, fromRate, toRate] = await Promise.all([
             retryCall(() => contract.isSupported(cleanFrom), "isFromSupported"),
             retryCall(() => contract.isSupported(cleanTo), "isToSupported"),
@@ -57,16 +58,14 @@ app.post('/get-signature', async (req, res) => {
             retryCall(() => contract.tokenRates(cleanTo), "toRate")
         ]);
 
-        // 2. 上限額の取得 (Revert対策のフォールバック付き)
+        // 2. 上限額の取得
         let maxLimitUSD;
         try {
             maxLimitUSD = await contract.maxSwapAmountUSD();
         } catch (e) {
-            console.log(`Warning: Could not fetch maxSwapAmountUSD, using default 100 USD. Error: ${e.message}`);
-            maxLimitUSD = ethers.parseUnits("100", 18); // コントラクトの初期値と同じ
+            console.log(`Warning: Could not fetch maxSwapAmountUSD, using default 100 USD.`);
+            maxLimitUSD = ethers.parseUnits("100", 18);
         }
-
-        console.log(`Status -> fromOk:${isFromOk}, toOk:${isToOk}, fromRate:${fromRate.toString()}`);
 
         // バリデーション
         if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
@@ -85,7 +84,18 @@ app.post('/get-signature', async (req, res) => {
         // 4. スワップ後の数量計算
         const toAmountBI = (fromAmountBI * fromRate) / toRate;
 
-        // 5. 署名ハッシュ作成 (Solidity V3準拠: msg.sender, from, to, amountIn, amountOut, nonce)
+        // 4.5 在庫チェック (新規追加)
+        // コントラクト側の在庫を取得し、払出予定額と比較します 
+        const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
+        if (actualStock < toAmountBI) {
+            console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
+            return res.status(400).json({
+                error: "Insufficient liquidity",
+                message: "プールの在庫が不足しています"
+            });
+        }
+
+        // 5. 署名ハッシュ作成
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
             [cleanUser, cleanFrom, cleanTo, fromAmountBI, toAmountBI, BigInt(nonce)]
