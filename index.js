@@ -1,4 +1,5 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // 通信エラー回避
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 require('dotenv').config();
 const express = require('express');
 const { ethers } = require('ethers');
@@ -8,65 +9,83 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 設定 ---
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-// 以前成功していたURLに戻します
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
+
+// --- 接続先の変更 ---
+// EPROTO回避のため、HTTPSではなく可能な限りHTTP接続を試みる、
+// あるいは代替のエンドポイント（以前成功していたドメイン）に戻します。
 const RPC_URL = "https://rpc.testnet.chain.robinhood.com";
 
-// 以前のシンプルなProvider作成に戻します
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, {
+    staticNetwork: true
+});
 
-// 秘密鍵の補完
-let finalKey = PRIVATE_KEY;
-if (finalKey && !finalKey.startsWith('0x')) {
-    finalKey = '0x' + finalKey;
-}
-const wallet = new ethers.Wallet(finalKey, provider);
+let pk = PRIVATE_KEY;
+if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
+const wallet = new ethers.Wallet(pk, provider);
 
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
+    "function maxSwapAmountUSD() view returns (uint256)",
     "function isSupported(address) view returns (bool)"
 ];
+
+const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+
+// リトライ関数（待機時間を少し伸ばして負荷を分散）
+async function retryCall(fn, name = "Request", retries = 5) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            console.log(`[Retry] ${name} failed: ${err.message} (attempt ${i + 1}/${retries})...`);
+            if (i === retries - 1) throw err;
+            await new Promise(res => setTimeout(res, 2000));
+        }
+    }
+}
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
-        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
-        // レートとサポート状況の取得
-        const [rateFrom, rateTo, isFromOk, isToOk] = await Promise.all([
-            contract.tokenRates(fromToken),
-            contract.tokenRates(toToken),
-            contract.isSupported(fromToken),
-            contract.isSupported(toToken)
-        ]);
+        // データを順次取得
+        const fromRate = await retryCall(() => contract.tokenRates(fromToken), "getRateFrom");
+        const toRate = await retryCall(() => contract.tokenRates(toToken), "getRateTo");
+        const maxLimitUSD = await retryCall(() => contract.maxSwapAmountUSD(), "getMaxLimit");
+        const isFromOk = await retryCall(() => contract.isSupported(fromToken), "checkSupportFrom");
+        const isToOk = await retryCall(() => contract.isSupported(toToken), "checkSupportTo");
 
-        if (!isFromOk || !isToOk || rateFrom === 0n || rateTo === 0n) {
-            return res.status(400).json({ error: "Unsupported token or rate not set" });
-        }
+        if (!isFromOk || !isToOk) return res.status(400).json({ error: "Unsupported token" });
 
         const fromAmountBI = BigInt(fromAmount);
-        const toAmountBI = (fromAmountBI * rateFrom) / rateTo;
+        const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
 
-        // ハッシュ作成：以前のコード通り toAmountBI (BigInt) を直接渡す形式に戻します
+        if (fromAmountUSD > maxLimitUSD) {
+            return res.status(400).json({
+                error: "Exceeds max swap amount limit",
+                limit: ethers.formatUnits(maxLimitUSD, 18)
+            });
+        }
+
+        if (toRate === 0n) return res.status(400).json({ error: "Target rate is zero" });
+
+        const toAmountBI = (fromAmountBI * fromRate) / toRate;
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [userAddress, fromToken, toToken, fromAmount, toAmountBI, nonce]
+            [userAddress, fromToken, toToken, fromAmountBI, toAmountBI, BigInt(nonce)]
         );
+
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
-        res.json({
-            toAmount: toAmountBI.toString(),
-            signature: signature
-        });
+        res.json({ toAmount: toAmountBI.toString(), signature: signature });
 
     } catch (error) {
-        console.error("Signature Error:", error);
-        res.status(500).json({ error: "Internal Server Error", details: error.message });
+        console.error("Critical Connection Error:", error);
+        res.status(500).json({ error: "Testnet connection error. RPC may be busy.", details: error.message });
     }
 });
 
-// Renderの標準ポート10000を使用
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Signer running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Final Attempt Signer running on port ${PORT}`));
