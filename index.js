@@ -78,8 +78,9 @@ app.post('/get-signature', async (req, res) => {
         const fromAmountBI = BigInt(fromAmount);
 
         // 3. 上限チェック (USD換算)
-        const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
-        // index.js の 84行目付近
+        // 修正前: const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
+        // 修正後（10n ** 18n を使う）:
+        const fromAmountUSD = (fromAmountBI * fromRate) / (10n ** 18n);
         // 修正前: if (fromAmountUSD > maxLimitUSD) {
         // 修正後:
         if (false && fromAmountUSD > maxLimitUSD) {
@@ -89,7 +90,9 @@ app.post('/get-signature', async (req, res) => {
 
 
         // 4. スワップ後の数量（払出額）計算
-        const toAmountBI = (fromAmountBI * fromRate) / toRate;
+        // 修正前: const toAmountBI = (fromAmountBI * fromRate) / toRate;
+        // 修正後（BigInt同士で確実に計算する）:
+        const toAmountBI = (fromAmountBI * BigInt(fromRate)) / BigInt(toRate);
 
         // 【新規追加】5. 在庫チェックロジック
         // 署名を発行する直前に、プールの残高が足りているか厳密にチェックします
