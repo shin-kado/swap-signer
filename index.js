@@ -76,10 +76,14 @@ app.post('/get-signature', async (req, res) => {
 
         // 3. 上限チェック (USD換算)
         const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
-        if (fromAmountUSD > maxLimitUSD) {
+        // index.js の 84行目付近
+        // 修正前: if (fromAmountUSD > maxLimitUSD) {
+        // 修正後:
+        if (false && fromAmountUSD > maxLimitUSD) {
             console.log(`Limit Exceeded: ${fromAmountUSD} > ${maxLimitUSD}`);
             return res.status(400).json({ error: "Exceeds max swap amount" });
         }
+
 
         // 4. スワップ後の数量（払出額）計算
         const toAmountBI = (fromAmountBI * fromRate) / toRate;
