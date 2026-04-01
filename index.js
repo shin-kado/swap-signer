@@ -11,19 +11,19 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL_ROBINHOOD || "https://rpc.testnet.chain.robinhood.com";
 
-// Provider設定
+// 【既存の書式を維持】検証で成功したシンプルなProvider設定
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 let pk = PRIVATE_KEY;
 if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
-// ABI設定 (getStockを追加)
+// 【ABIの更新】既存機能を保持しつつ getStock を追加
 const ABI = [
     "function isSupported(address) view returns (bool)",
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
-    "function getStock(address) view returns (uint256)" // 在庫確認用に追加 
+    "function getStock(address) view returns (uint256)" // 在庫確認用に追加
 ];
 
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
@@ -48,7 +48,7 @@ app.post('/get-signature', async (req, res) => {
         const cleanFrom = ethers.getAddress(fromToken);
         const cleanTo = ethers.getAddress(toToken);
 
-        console.log(`--- Request Start ---`);
+        console.log(`--- Request Start for Nonce: ${nonce} ---`);
 
         // 1. 必須データの取得
         const [isFromOk, isToOk, fromRate, toRate] = await Promise.all([
@@ -81,21 +81,21 @@ app.post('/get-signature', async (req, res) => {
             return res.status(400).json({ error: "Exceeds max swap amount" });
         }
 
-        // 4. スワップ後の数量計算
+        // 4. スワップ後の数量（払出額）計算
         const toAmountBI = (fromAmountBI * fromRate) / toRate;
 
-        // 4.5 在庫チェック (新規追加)
-        // コントラクト側の在庫を取得し、払出予定額と比較します 
+        // 【新規追加】5. 在庫チェックロジック
+        // 署名を発行する直前に、プールの残高が足りているか厳密にチェックします
         const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
         if (actualStock < toAmountBI) {
             console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
             return res.status(400).json({
                 error: "Insufficient liquidity",
-                message: "プールの在庫が不足しています"
+                message: "プールの在庫が不足しています。管理者に補充を依頼してください。"
             });
         }
 
-        // 5. 署名ハッシュ作成
+        // 6. 署名ハッシュ作成 (Solidity V4準拠)
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
             [cleanUser, cleanFrom, cleanTo, fromAmountBI, toAmountBI, BigInt(nonce)]
@@ -118,5 +118,5 @@ app.post('/get-signature', async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Signer Active | Target: ${CONTRACT_ADDRESS}`);
+    console.log(`Signer V4 Active | Target: ${CONTRACT_ADDRESS}`);
 });
