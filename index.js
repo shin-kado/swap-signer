@@ -11,8 +11,6 @@ app.use(express.json());
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-
-// Renderの環境変数からURLを取得、なければデフォルトのHTTPSを使用
 const RPC_URL = process.env.RPC_URL_ROBINHOOD || "https://rpc.testnet.chain.robinhood.com";
 
 const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, {
@@ -45,7 +43,14 @@ async function retryCall(fn, name = "Request", retries = 3) {
 
 app.post('/get-signature', async (req, res) => {
     try {
-        const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
+        let { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
+
+        // 【重要】アドレスを正規化 (0x...形式に統一)
+        userAddress = ethers.getAddress(userAddress);
+        fromToken = ethers.getAddress(fromToken);
+        toToken = ethers.getAddress(toToken);
+
+        console.log(`Processing: From=${fromToken}, To=${toToken}, Amount=${fromAmount}`);
 
         // 1. コントラクトから状態を取得
         const [fromRate, toRate, maxLimitUSD, isFromOk, isToOk] = await Promise.all([
@@ -56,9 +61,15 @@ app.post('/get-signature', async (req, res) => {
             retryCall(() => contract.isSupported(toToken), "isToOk")
         ]);
 
+        // デバッグログ出力 (Renderのログで確認できます)
+        console.log(`Debug: isFromOk=${isFromOk}, isToOk=${isToOk}, fromRate=${fromRate}, toRate=${toRate}`);
+
         // 2. バリデーション
         if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
-            return res.status(400).json({ error: "Unsupported token or rate not set" });
+            return res.status(400).json({
+                error: "Unsupported token or rate not set",
+                details: { isFromOk, isToOk, fromRate: fromRate.toString(), toRate: toRate.toString() }
+            });
         }
 
         const fromAmountBI = BigInt(fromAmount);
@@ -70,17 +81,10 @@ app.post('/get-signature', async (req, res) => {
 
         const toAmountBI = (fromAmountBI * fromRate) / toRate;
 
-        // 3. Solidity v0.8.20 (V3) 仕様の署名作成
+        // 3. 署名作成
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [
-                ethers.getAddress(userAddress),
-                ethers.getAddress(fromToken),
-                ethers.getAddress(toToken),
-                fromAmountBI,
-                toAmountBI,
-                BigInt(nonce)
-            ]
+            [userAddress, fromToken, toToken, fromAmountBI, toAmountBI, BigInt(nonce)]
         );
 
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
@@ -91,7 +95,7 @@ app.post('/get-signature', async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Signature Error:", error);
+        console.error("Signature Error Detail:", error);
         res.status(500).json({ error: "Internal Server Error", details: error.message });
     }
 });
@@ -100,5 +104,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`V3 Signer Active on port ${PORT}`);
     console.log(`Target Contract: ${CONTRACT_ADDRESS}`);
-    console.log(`Using RPC: ${RPC_URL}`);
 });
