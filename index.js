@@ -12,6 +12,7 @@ app.use(express.json());
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 
+
 // --- 接続先の変更 ---
 // EPROTO回避のため、HTTPSではなく可能な限りHTTP接続を試みる、
 // あるいは代替のエンドポイント（以前成功していたドメイン）に戻します。
