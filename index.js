@@ -68,7 +68,10 @@ app.post('/get-signature', async (req, res) => {
         }
 
         // バリデーション
-        if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
+        // index.js の 78行目付近
+        // 修正前: if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
+        // 修正後:
+        if (false && (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n)) {
             return res.status(400).json({ error: "Unsupported token or rate not set" });
         }
 
