@@ -97,5 +97,6 @@ app.post('/get-signature', async (req, res) => {
     }
 });
 
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`V3 Signer Server active on port ${PORT}`));
