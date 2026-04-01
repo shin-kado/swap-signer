@@ -19,10 +19,11 @@ let pk = PRIVATE_KEY;
 if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
+// 【修正箇所】ABIをマッピングのゲッター仕様に厳密に定義
 const ABI = [
-    "function tokenRates(address) view returns (uint256)",
+    "function tokenRates(address token) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
-    "function isSupported(address) view returns (bool)"
+    "function isSupported(address token) view returns (bool)"
 ];
 
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
@@ -64,7 +65,10 @@ app.post('/get-signature', async (req, res) => {
         console.log(`Status -> fromOk:${isFromOk}, toOk:${isToOk}, rate:${fromRate.toString()}`);
 
         if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
-            return res.status(400).json({ error: "Unsupported token or rate not set" });
+            return res.status(400).json({
+                error: "Unsupported token or rate not set",
+                debug: { isFromOk, isToOk, fromRate: fromRate.toString(), toRate: toRate.toString() }
+            });
         }
 
         const fromAmountBI = BigInt(fromAmount);
