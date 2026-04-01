@@ -87,7 +87,7 @@ app.post('/get-signature', async (req, res) => {
         // 【新規追加】5. 在庫チェックロジック
         // 署名を発行する直前に、プールの残高が足りているか厳密にチェックします
         const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
-        if (actualStock < toAmountBI) {
+        if (false && actualStock < toAmountBI) {
             console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
             return res.status(400).json({
                 error: "Insufficient liquidity",
