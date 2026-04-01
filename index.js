@@ -1,4 +1,4 @@
-// 1. 通信エラーを強制回避するための設定
+// SSL証明書エラーを回避（Render環境の安定化）
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 require('dotenv').config();
@@ -10,93 +10,82 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- ネットワーク・コントラクト設定 ---
-const CONTRACT_ADDRESS = "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
+// 環境変数
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || "0xd6B75904824963e33C5F85C2021F584AaA5CeB97";
 const RPC_URL = "https://rpc-testnet.robinhoodchain.com";
 
-// 2. 以前の「動いていた頃」と同じシンプルなProvider作成に戻す
-// ただし、Render環境での安定化のため、最小限のオプションのみ付与
+// 安定動作していた頃のシンプルなProvider設定に戻す
 const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, {
     staticNetwork: true
 });
 
-// PRIVATE_KEYの補完
-let privateKey = process.env.PRIVATE_KEY;
-if (privateKey && !privateKey.startsWith('0x')) {
-    privateKey = '0x' + privateKey;
-}
+// PRIVATE_KEYの整形（0xがない場合に追加）
+let pk = PRIVATE_KEY;
+if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
+const wallet = new ethers.Wallet(pk, provider);
 
-const wallet = new ethers.Wallet(privateKey, provider);
-
-// 全機能（上限チェック用含む）を保持したABI
+// 全機能を保持したABI
 const ABI = [
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
     "function isSupported(address) view returns (bool)"
 ];
 
-// コントラクトインスタンス
-const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
+const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
 app.post('/get-signature', async (req, res) => {
     try {
         const { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        // 3. 通信の核心：安定していた頃のように順番に処理を行う（Promise.allを避ける）
-        // テストネットの負荷が高い場合、一斉にリクエストを送るとEPROTOが出やすいためです
+        // 【改善点】Promise.allを避け、1つずつ確実に取得することでRPCの負荷（EPROTO）を抑える
         const fromRate = await contract.tokenRates(fromToken);
         const toRate = await contract.tokenRates(toToken);
         const maxLimitUSD = await contract.maxSwapAmountUSD();
         const isFromOk = await contract.isSupported(fromToken);
         const isToOk = await contract.isSupported(toToken);
 
+        // サポートチェック
         if (!isFromOk || !isToOk) {
-            return res.status(400).json({ error: "One of the tokens is not supported." });
+            return res.status(400).json({ error: "Unsupported token" });
         }
 
-        const fromAmountBN = BigInt(fromAmount);
-        const fromAmountUSD = (fromAmountBN * fromRate) / BigInt(10 ** 18);
+        const fromAmountBI = BigInt(fromAmount);
 
-        // --- 新機能：上限チェック（完全に保持） ---
+        // --- 保持したい新機能：上限チェック ---
+        const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
         if (fromAmountUSD > maxLimitUSD) {
             return res.status(400).json({
-                error: "Exceeds max swap amount limit (USD)",
-                requestedUSD: ethers.formatUnits(fromAmountUSD, 18),
-                limitUSD: ethers.formatUnits(maxLimitUSD, 18)
+                error: "Exceeds max swap amount limit",
+                limit: ethers.formatUnits(maxLimitUSD, 18)
             });
         }
 
-        if (toRate === BigInt(0)) return res.status(400).json({ error: "Target token rate is zero." });
+        // レートが0の場合の回避
+        if (toRate === 0n) return res.status(400).json({ error: "Target rate is zero" });
 
         // 計算ロジック
-        const toAmountBN = (fromAmountBN * fromRate) / toRate;
-        const toAmount = toAmountBN.toString();
+        const toAmountBI = (fromAmountBI * fromRate) / toRate;
 
-        // 4. 署名作成：以前の「成功していた頃」のパラメータ渡しを再現
+        // ハッシュ作成：成功していた頃の型（uint256は文字列ではなくBigIntのまま渡すのが安全）
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [userAddress, fromToken, toToken, fromAmount, toAmount, nonce]
+            [userAddress, fromToken, toToken, fromAmountBI, toAmountBI, BigInt(nonce)]
         );
 
-        // 署名生成
+        // 署名
         const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
-        // レスポンス
         res.json({
-            toAmount,
-            signature,
-            rateUsed: ethers.formatUnits(fromRate, 18)
+            toAmount: toAmountBI.toString(),
+            signature: signature
         });
 
     } catch (error) {
         console.error("Signature Error:", error);
-        res.status(500).json({
-            error: "Internal server error during signing.",
-            details: error.message
-        });
+        res.status(500).json({ error: "Internal Server Error", details: error.message });
     }
 });
 
-// ポート設定
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`V3 Signer Server active on port ${PORT}`));
+app.listen(PORT, () => console.log(`Signer Server running on port ${PORT}`));
