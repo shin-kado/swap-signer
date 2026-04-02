@@ -34,6 +34,7 @@ const ABI = [
     "function owner() view returns (address)",
     "function signerAddress() view returns (address)"
 ];
+
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
 async function retryCall(fn, name = "Request", retries = 3) {
