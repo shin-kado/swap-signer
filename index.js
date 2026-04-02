@@ -105,8 +105,10 @@ app.post('/get-signature', async (req, res) => {
         // wallet.signMessage ではなく、直接署名を行う wallet.signingKey.sign を使います
         // これにより、余計な接頭辞がつかない「純粋な署名」になります
         // 7. 署名作成（ラベルなしの純粋な署名）
+        // 7. 署名作成（ラベルなしの純粋な署名）
         const messageBytes = ethers.getBytes(messageHash);
-        const signingKey = new ethers.SigningKey(pk);
+        // 冒頭で定義した環境変数の PRIVATE_KEY を直接使用します
+        const signingKey = new ethers.SigningKey(process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY);
         const signature = signingKey.sign(messageBytes).serialized;
 
         console.log(`Success: Signature generated for ${toAmountBI.toString()} MRT`);
