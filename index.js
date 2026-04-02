@@ -11,17 +11,19 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const RPC_URL = process.env.RPC_URL_ROBINHOOD || "https://rpc.testnet.chain.robinhood.com";
 
+// 【既存の書式を維持】検証で成功したシンプルなProvider設定
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 let pk = PRIVATE_KEY;
 if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
+// 【ABIの更新】既存機能を保持しつつ getStock を追加
 const ABI = [
     "function isSupported(address) view returns (bool)",
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
-    "function getStock(address) view returns (uint256)"
+    "function getStock(address) view returns (uint256)" // 在庫確認用に追加
 ];
 
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
@@ -31,57 +33,61 @@ async function retryCall(fn, name = "Request", retries = 3) {
         try {
             return await fn();
         } catch (err) {
-            console.error(`[${name}] Attempt ${i + 1} failed:`, err.message);
+            console.log(`[Retry] ${name} failed: ${err.message}`);
             if (i === retries - 1) throw err;
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(res => setTimeout(res, 1000));
         }
     }
 }
 
 app.post('/get-signature', async (req, res) => {
     try {
-        const { user, fromToken, toToken, fromAmount, nonce } = req.body;
+        let { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        const cleanUser = ethers.getAddress(user);
+        const cleanUser = ethers.getAddress(userAddress);
         const cleanFrom = ethers.getAddress(fromToken);
         const cleanTo = ethers.getAddress(toToken);
 
+        console.log(`--- Request Start for Nonce: ${nonce} ---`);
+
         // 1. 必須データの取得
-        // 変数名の衝突を避けるため fRate, tRate としています
-        const [isFromOk, isToOk, fRate, tRate] = await Promise.all([
+        const [isFromOk, isToOk, fromRate, toRate] = await Promise.all([
             retryCall(() => contract.isSupported(cleanFrom), "isFromSupported"),
             retryCall(() => contract.isSupported(cleanTo), "isToSupported"),
             retryCall(() => contract.tokenRates(cleanFrom), "fromRate"),
             retryCall(() => contract.tokenRates(cleanTo), "toRate")
         ]);
 
-        // 2. バリデーション（★テスト用に一時的に無効化中）
-        if (false && (!isFromOk || !isToOk || fRate === 0n || tRate === 0n)) {
+        // 2. 上限額の取得
+        let maxLimitUSD;
+        try {
+            maxLimitUSD = await contract.maxSwapAmountUSD();
+        } catch (e) {
+            console.log(`Warning: Could not fetch maxSwapAmountUSD, using default 100 USD.`);
+            maxLimitUSD = ethers.parseUnits("100", 18);
+        }
+
+        // バリデーション
+        if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
             return res.status(400).json({ error: "Unsupported token or rate not set" });
         }
 
-        // 3. 数値計算の準備 (BigInt型に統一)
         const fromAmountBI = BigInt(fromAmount);
-        const fromRateBI = BigInt(fRate);
-        const toRateBI = BigInt(tRate);
 
-        // 4. USD換算チェック（★テスト用に一時的に無効化中）
-        // 10n ** 18n を使い、BigInt同士で計算して型エラーを防ぎます
-        const fromAmountUSD = (fromAmountBI * fromRateBI) / (10n ** 18n);
-        const maxLimitUSD = await retryCall(() => contract.maxSwapAmountUSD(), "maxLimit");
-
-        if (false && fromAmountUSD > maxLimitUSD) {
+        // 3. 上限チェック (USD換算)
+        const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
+        if (fromAmountUSD > maxLimitUSD) {
             console.log(`Limit Exceeded: ${fromAmountUSD} > ${maxLimitUSD}`);
             return res.status(400).json({ error: "Exceeds max swap amount" });
         }
 
-        // 5. 受け取り数量（払出額）計算
-        // ここで 1 AMZN -> 5,000 MRT のような計算が行われます
-        const toAmountBI = (fromAmountBI * fromRateBI) / toRateBI;
+        // 4. スワップ後の数量（払出額）計算
+        const toAmountBI = (fromAmountBI * fromRate) / toRate;
 
-        // 6. 在庫チェックロジック（★テスト用に一時的に無効化中）
+        // 【新規追加】5. 在庫チェックロジック
+        // 署名を発行する直前に、プールの残高が足りているか厳密にチェックします
         const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
-        if (false && actualStock < toAmountBI) {
+        if (actualStock < toAmountBI) {
             console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
             return res.status(400).json({
                 error: "Insufficient liquidity",
@@ -89,29 +95,15 @@ app.post('/get-signature', async (req, res) => {
             });
         }
 
-        // 7. 署名ハッシュ作成 (Solidityの abi.encodePacked と完全に一致させます)
+        // 6. 署名ハッシュ作成 (Solidity V4準拠)
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [
-                cleanUser,
-                cleanFrom,
-                cleanTo,
-                fromAmountBI,
-                toAmountBI,
-                BigInt(nonce)
-            ]
+            [cleanUser, cleanFrom, cleanTo, fromAmountBI, toAmountBI, BigInt(nonce)]
         );
 
-        // wallet.signMessage ではなく、直接署名を行う wallet.signingKey.sign を使います
-        // これにより、余計な接頭辞がつかない「純粋な署名」になります
-        // 7. 署名作成（ラベルなしの純粋な署名）
-        // 7. 署名作成（ラベルなしの純粋な署名）
-        const messageBytes = ethers.getBytes(messageHash);
-        // 冒頭で定義した環境変数の PRIVATE_KEY を直接使用します
-        const signingKey = new ethers.SigningKey(process.env.PRIVATE_KEY.startsWith('0x') ? process.env.PRIVATE_KEY : '0x' + process.env.PRIVATE_KEY);
-        const signature = signingKey.sign(messageBytes).serialized;
+        const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
 
-        console.log(`Success: Signature generated for ${toAmountBI.toString()} MRT`);
+        console.log(`Success: Signature generated for Nonce ${nonce}`);
 
         res.json({
             toAmount: toAmountBI.toString(),
@@ -119,15 +111,12 @@ app.post('/get-signature', async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Signature Error:", error);
-        res.status(500).json({
-            error: "Internal Server Error",
-            message: error.message
-        });
+        console.error("Critical Server Error:", error);
+        res.status(500).json({ error: "Internal Server Error", message: error.message });
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Signer V4 Active | Port: ${PORT}`);
+    console.log(`Signer V4 Active | Target: ${CONTRACT_ADDRESS}`);
 });
