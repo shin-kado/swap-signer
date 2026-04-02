@@ -102,9 +102,10 @@ app.post('/get-signature', async (req, res) => {
             ]
         );
 
-        // 重要：messageHash を「文字列」ではなく「バイト配列」として署名します
+        // wallet.signMessage ではなく、直接署名を行う wallet.signingKey.sign を使います
+        // これにより、余計な接頭辞がつかない「純粋な署名」になります
         const messageBytes = ethers.getBytes(messageHash);
-        const signature = await wallet.signMessage(messageBytes);
+        const signature = wallet.signingKey.sign(messageBytes).serialized;
 
         console.log(`Success: Signature generated for ${toAmountBI.toString()} MRT`);
 
