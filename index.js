@@ -75,28 +75,30 @@ app.post('/get-signature', async (req, res) => {
             return res.status(400).json({ error: "Unsupported token or rate not set" });
         }
 
+
+        // --- 修正後の計算ブロック（元々の記述をすべて維持） ---
+
+        // 1. fromAmountBI を確実に BigInt に
         const fromAmountBI = BigInt(fromAmount);
 
-        // 3. 上限チェック (USD換算)
-        // 修正前: const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(10 ** 18);
-        // 修正後（10n ** 18n を使う）:
-        const fromAmountUSD = (fromAmountBI * fromRate) / (10n ** 18n);
-        // 修正前: if (fromAmountUSD > maxLimitUSD) {
-        // 修正後:
+        // 2. USD換算チェック（BigInt型に統一してエラーを防止）
+        const fromAmountUSD = (fromAmountBI * BigInt(fromRate)) / (10n ** 18n);
+
+        // ★テスト用に false && で無効化中
         if (false && fromAmountUSD > maxLimitUSD) {
             console.log(`Limit Exceeded: ${fromAmountUSD} > ${maxLimitUSD}`);
             return res.status(400).json({ error: "Exceeds max swap amount" });
         }
 
-
-        // 4. スワップ後の数量（払出額）計算
-        // 修正前: const toAmountBI = (fromAmountBI * fromRate) / toRate;
-        // 修正後（BigInt同士で確実に計算する）:
+        // 3. 受け取り数量計算（BigInt型に統一してエラーを防止）
+        // ここで 1 AMZN -> 5,000 MRT の計算が正確に行われます
         const toAmountBI = (fromAmountBI * BigInt(fromRate)) / BigInt(toRate);
 
-        // 【新規追加】5. 在庫チェックロジック
-        // 署名を発行する直前に、プールの残高が足りているか厳密にチェックします
+        // 4. 在庫の取得（必須行）
         const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
+
+        // 5. 在庫チェック
+        // ★テスト用に false && で無効化中
         if (false && actualStock < toAmountBI) {
             console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
             return res.status(400).json({
