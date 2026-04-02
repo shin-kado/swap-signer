@@ -89,8 +89,7 @@ app.post('/get-signature', async (req, res) => {
             });
         }
 
-        // 7. 署名ハッシュ作成 (Solidity V4準拠)
-        // nonce も含め、すべての数値を確実に BigInt にキャストします
+        // 7. 署名ハッシュ作成 (Solidityの abi.encodePacked と完全に一致させます)
         const messageHash = ethers.solidityPackedKeccak256(
             ["address", "address", "address", "uint256", "uint256", "uint256"],
             [
@@ -103,10 +102,11 @@ app.post('/get-signature', async (req, res) => {
             ]
         );
 
-        // 署名の作成方法をより標準的な形式に変更
-        const signature = await wallet.signMessage(ethers.getBytes(messageHash));
+        // 重要：messageHash を「文字列」ではなく「バイト配列」として署名します
+        const messageBytes = ethers.getBytes(messageHash);
+        const signature = await wallet.signMessage(messageBytes);
 
-        console.log(`Success: Signature generated for Nonce ${nonce}`);
+        console.log(`Success: Signature generated for ${toAmountBI.toString()} MRT`);
 
         res.json({
             toAmount: toAmountBI.toString(),
