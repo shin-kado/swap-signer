@@ -42,91 +42,53 @@ async function retryCall(fn, name = "Request", retries = 3) {
 
 app.post('/get-signature', async (req, res) => {
     try {
-        let { userAddress, fromToken, toToken, fromAmount, nonce } = req.body;
+        const { user, fromToken, toToken, fromAmount, nonce } = req.body;
 
-        const cleanUser = ethers.getAddress(userAddress);
+        const cleanUser = ethers.getAddress(user);
         const cleanFrom = ethers.getAddress(fromToken);
         const cleanTo = ethers.getAddress(toToken);
 
-        console.log(`--- Request Start for Nonce: ${nonce} ---`);
-
-        // 1. 必須データの取得
-        const [isFromOk, isToOk, fromRate, toRate] = await Promise.all([
+        // 1. 必須データの取得（ここを一つにまとめます）
+        const [isFromOk, isToOk, fRate, tRate] = await Promise.all([
             retryCall(() => contract.isSupported(cleanFrom), "isFromSupported"),
             retryCall(() => contract.isSupported(cleanTo), "isToSupported"),
             retryCall(() => contract.tokenRates(cleanFrom), "fromRate"),
             retryCall(() => contract.tokenRates(cleanTo), "toRate")
         ]);
 
-        // 2. 上限額の取得
-        let maxLimitUSD;
-        try {
-            maxLimitUSD = await contract.maxSwapAmountUSD();
-        } catch (e) {
-            console.log(`Warning: Could not fetch maxSwapAmountUSD, using default 100 USD.`);
-            maxLimitUSD = ethers.parseUnits("100", 18);
-        }
-
-        // バリデーション
-        // index.js の 78行目付近
-        // 修正前: if (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n) {
-        // 修正後:
-        if (false && (!isFromOk || !isToOk || fromRate === 0n || toRate === 0n)) {
+        // 2. バリデーション（テスト用に無効化中）
+        if (false && (!isFromOk || !isToOk || fRate === 0n || tRate === 0n)) {
             return res.status(400).json({ error: "Unsupported token or rate not set" });
         }
 
-
-        // --- 修正後の計算ブロック（元々の記述をすべて維持） ---
-
-        // 1. fromAmountBI を確実に BigInt に
+        // 3. 数値計算の準備
         const fromAmountBI = BigInt(fromAmount);
+        const fromRateBI = BigInt(fRate);
+        const toRateBI = BigInt(tRate);
 
-        // 2. USD換算チェック（BigInt型に統一してエラーを防止）
-        const fromAmountUSD = (fromAmountBI * BigInt(fromRate)) / (10n ** 18n);
+        // 4. USD換算チェック（テスト用に無効化中）
+        const fromAmountUSD = (fromAmountBI * fromRateBI) / (10n ** 18n);
+        const maxLimitUSD = await retryCall(() => contract.maxSwapAmountUSD(), "maxLimit");
 
-        // ★テスト用に false && で無効化中
         if (false && fromAmountUSD > maxLimitUSD) {
             console.log(`Limit Exceeded: ${fromAmountUSD} > ${maxLimitUSD}`);
             return res.status(400).json({ error: "Exceeds max swap amount" });
         }
 
-        // 3. 受け取り数量計算（BigInt型に統一してエラーを防止）
-        // ここで 1 AMZN -> 5,000 MRT の計算が正確に行われます
-        const toAmountBI = (fromAmountBI * BigInt(fromRate)) / BigInt(toRate);
+        // 5. 受け取り数量（払出額）計算
+        const toAmountBI = (fromAmountBI * fromRateBI) / toRateBI;
 
-        // 4. 在庫の取得（必須行）
+        // 6. 在庫チェックロジック（テスト用に無効化中）
         const actualStock = await retryCall(() => contract.getStock(cleanTo), "getStock");
-
-        // 5. 在庫チェック
-        // ★テスト用に false && で無効化中
         if (false && actualStock < toAmountBI) {
             console.log(`Insufficient Stock: Required ${toAmountBI} > Available ${actualStock}`);
             return res.status(400).json({
                 error: "Insufficient liquidity",
-                message: "プールの在庫が不足しています。管理者に補充を依頼してください。"
+                message: "プールの在庫が不足しています。"
             });
         }
 
-        // 6. 署名ハッシュ作成 (Solidity V4準拠)
-        const messageHash = ethers.solidityPackedKeccak256(
-            ["address", "address", "address", "uint256", "uint256", "uint256"],
-            [cleanUser, cleanFrom, cleanTo, fromAmountBI, toAmountBI, BigInt(nonce)]
-        );
-
-        const signature = await wallet.signMessage(ethers.toBeArray(messageHash));
-
-        console.log(`Success: Signature generated for Nonce ${nonce}`);
-
-        res.json({
-            toAmount: toAmountBI.toString(),
-            signature: signature
-        });
-
-    } catch (error) {
-        console.error("Critical Server Error:", error);
-        res.status(500).json({ error: "Internal Server Error", message: error.message });
-    }
-});
+    });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
