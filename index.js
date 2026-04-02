@@ -18,14 +18,22 @@ if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
 // 最新の RobinhoodSwap_v4.sol に準拠したABI
+// 【ABIの完全版】HTML側から呼ばれるすべての関数を定義します
 const ABI = [
+    // スワップ計算・チェック用
     "function isSupported(address) view returns (bool)",
     "function tokenRates(address) view returns (uint256)",
     "function maxSwapAmountUSD() view returns (uint256)",
     "function getStock(address) view returns (uint256)",
-    "function nonces(address) view returns (uint256)"
-];
+    "function nonces(address) view returns (uint256)",
 
+    // 通信テスト（トークン一覧取得）用
+    "function getSupportedTokens() view returns (address[])",
+
+    // 管理用（必要に応じて）
+    "function owner() view returns (address)",
+    "function signerAddress() view returns (address)"
+];
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
 async function retryCall(fn, name = "Request", retries = 3) {
