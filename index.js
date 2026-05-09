@@ -63,7 +63,7 @@ app.post('/get-signature', async (req, res) => {
         // 2. スワップ上限チェック
         const fromAmountUSD = (fromAmountBI * fromRate) / BigInt(1e18);
         const maxSwapUSD = BigInt(await retryCall(() => contract.maxSwapAmountUSD(), "getMaxSwap"));
-        if (fromAmountUSD > maxSwapUSD) return res.status(400).json({ error: "Exceeds max swap amount" });
+        if (fromAmountUSD > maxSwapUSD) return res.status(400).json({ error: "Exceeds max swap amount\n スワップ最大取引数量エラー" });
 
         // 3. 数量計算と在庫チェック
         const toAmountBI = (fromAmountBI * fromRate) / toRate;
