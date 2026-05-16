@@ -17,6 +17,13 @@ let pk = PRIVATE_KEY;
 if (pk && !pk.startsWith('0x')) pk = '0x' + pk;
 const wallet = new ethers.Wallet(pk, provider);
 
+// ==========================================
+// サーバー起動確認（プレウォーム）用 API
+// ==========================================
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ status: "ok", message: "Swap Server is awake!" });
+});
+
 // HTML側からの呼び出しに必要な全ての関数を網羅
 const ABI = [
     "function isSupported(address) view returns (bool)",
